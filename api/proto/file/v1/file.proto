@@ -1,0 +1,91 @@
+syntax = "proto3";
+
+package file.v1;
+
+option go_package = "github.com/tdenkov123/file-metadata-service/api/gen/file/v1;filev1";
+
+import "google/protobuf/timestamp.proto";
+
+service FileService {
+  rpc CreateUpload(CreateUploadRequest) returns (CreateUploadResponse);
+  rpc ConfirmUpload(ConfirmUploadRequest) returns (FileMetadata);
+  rpc GetFile(GetFileRequest) returns (FileMetadata);
+  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
+  rpc GetDownloadURL(GetDownloadURLRequest) returns (GetDownloadURLResponse);
+  rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
+}
+
+enum FileStatus {
+  FILE_STATUS_UNSPECIFIED = 0;
+  FILE_STATUS_PENDING = 1;
+  FILE_STATUS_READY = 2;
+  FILE_STATUS_DELETED = 3;
+}
+
+message FileMetadata {
+  string id = 1;
+  string owner_id = 2;
+  string bucket = 3;
+  string object_key = 4;
+  string original_name = 5;
+  string content_type = 6;
+  int64 size_bytes = 7;
+  string checksum_sha256 = 8;
+  FileStatus status = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+}
+
+message CreateUploadRequest {
+  string owner_id = 1;
+  string original_name = 2;
+  string content_type = 3;
+  int64 size_bytes = 4;
+}
+
+message CreateUploadResponse {
+  FileMetadata metadata = 1;
+  string upload_url = 2;
+  int64 expires_in_seconds = 3;
+}
+
+message ConfirmUploadRequest {
+  string id = 1;
+  string owner_id = 2;
+  string checksum_sha256 = 3;
+}
+
+message GetFileRequest {
+  string id = 1;
+  string owner_id = 2;
+}
+
+message ListFilesRequest {
+  string owner_id = 1;
+  int32 page_size = 2;
+  string page_token = 3;
+}
+
+message ListFilesResponse {
+  repeated FileMetadata files = 1;
+  string next_page_token = 2;
+}
+
+message GetDownloadURLRequest {
+  string id = 1;
+  string owner_id = 2;
+}
+
+message GetDownloadURLResponse {
+  string download_url = 1;
+  int64 expires_in_seconds = 2;
+}
+
+message DeleteFileRequest {
+  string id = 1;
+  string owner_id = 2;
+}
+
+message DeleteFileResponse {
+  bool success = 1;
+}
