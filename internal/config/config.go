@@ -22,7 +22,8 @@ type Config struct {
 	MinioSecretKey string
 	MinioBucket    string
 	MinioUseSSL    bool
-	PresignTTL     time.Duration
+	PresignTTL        time.Duration
+	MultipartPartSize int64
 
 	KafkaBrokers []string
 	KafkaTopic   string
@@ -49,6 +50,14 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	multipartPartSize, err := getEnvInt64("MULTIPART_PART_SIZE", 5*1024*1024)
+	if err != nil {
+		return nil, err
+	}
+	if multipartPartSize < 5*1024*1024 {
+		return nil, fmt.Errorf("MULTIPART_PART_SIZE must be at least 5MiB")
+	}
+
 	cfg := &Config{
 		GRPCPort:       grpcPort,
 		PostgresDSN:    getEnv("POSTGRES_DSN", "postgres://fms:fms@localhost:5432/fms?sslmode=disable"),
@@ -61,8 +70,9 @@ func Load() (*Config, error) {
 		MinioSecretKey: getEnv("MINIO_SECRET_KEY", "minioadmin"),
 		MinioBucket:    getEnv("MINIO_BUCKET", "files"),
 		MinioUseSSL:    getEnvBool("MINIO_USE_SSL", false),
-		PresignTTL:     presignTTL,
-		KafkaBrokers:   splitCSV(getEnv("KAFKA_BROKERS", "localhost:9092")),
+		PresignTTL:        presignTTL,
+		MultipartPartSize: multipartPartSize,
+		KafkaBrokers:      splitCSV(getEnv("KAFKA_BROKERS", "localhost:9092")),
 		KafkaTopic:     getEnv("KAFKA_TOPIC", "file.events"),
 	}
 
@@ -78,6 +88,18 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func getEnvInt64(key string, fallback int64) (int64, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: %w", key, err)
+	}
+	return n, nil
 }
 
 func getEnvInt(key string, fallback int) (int, error) {

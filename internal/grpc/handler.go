@@ -93,6 +93,80 @@ func (h *fileHandler) DeleteFile(ctx context.Context, req *filev1.DeleteFileRequ
 	return &filev1.DeleteFileResponse{Success: true}, nil
 }
 
+func (h *fileHandler) CreateMultipartUpload(ctx context.Context, req *filev1.CreateMultipartUploadRequest) (*filev1.CreateMultipartUploadResponse, error) {
+	result, err := h.svc.CreateMultipartUpload(ctx, req.GetOwnerId(), req.GetOriginalName(), req.GetContentType(), req.GetSizeBytes())
+	if err != nil {
+		return nil, mapError(err)
+	}
+	return &filev1.CreateMultipartUploadResponse{
+		Metadata:       toProtoFile(result.Metadata),
+		UploadId:       result.UploadID,
+		PartSizeBytes:  result.PartSize,
+		TotalParts:     result.TotalParts,
+	}, nil
+}
+
+func (h *fileHandler) GetPartUploadURL(ctx context.Context, req *filev1.GetPartUploadURLRequest) (*filev1.GetPartUploadURLResponse, error) {
+	result, err := h.svc.GetPartUploadURL(ctx, req.GetId(), req.GetOwnerId(), req.GetPartNumber())
+	if err != nil {
+		return nil, mapError(err)
+	}
+	return &filev1.GetPartUploadURLResponse{
+		UploadUrl:        result.URL,
+		ExpiresInSeconds: int64(result.ExpiresIn.Seconds()),
+		PartNumber:       result.PartNumber,
+		PartSizeBytes:    result.PartSize,
+	}, nil
+}
+
+func (h *fileHandler) ReportPartUploaded(ctx context.Context, req *filev1.ReportPartUploadedRequest) (*filev1.ReportPartUploadedResponse, error) {
+	part, err := h.svc.ReportPartUploaded(ctx, req.GetId(), req.GetOwnerId(), req.GetPartNumber(), req.GetEtag())
+	if err != nil {
+		return nil, mapError(err)
+	}
+	return &filev1.ReportPartUploadedResponse{
+		PartNumber: part.PartNumber,
+		Etag:       part.ETag,
+	}, nil
+}
+
+func (h *fileHandler) ListUploadParts(ctx context.Context, req *filev1.ListUploadPartsRequest) (*filev1.ListUploadPartsResponse, error) {
+	result, err := h.svc.ListUploadParts(ctx, req.GetId(), req.GetOwnerId())
+	if err != nil {
+		return nil, mapError(err)
+	}
+	parts := make([]*filev1.UploadPartInfo, 0, len(result.Parts))
+	for _, p := range result.Parts {
+		part := p
+		parts = append(parts, &filev1.UploadPartInfo{
+			PartNumber: part.PartNumber,
+			Etag:       part.ETag,
+			UploadedAt: timestamppb.New(part.UploadedAt),
+		})
+	}
+	return &filev1.ListUploadPartsResponse{
+		UploadId:      result.UploadID,
+		PartSizeBytes: result.PartSize,
+		TotalParts:    result.TotalParts,
+		Parts:         parts,
+	}, nil
+}
+
+func (h *fileHandler) CompleteMultipartUpload(ctx context.Context, req *filev1.CompleteMultipartUploadRequest) (*filev1.FileMetadata, error) {
+	file, err := h.svc.CompleteMultipartUpload(ctx, req.GetId(), req.GetOwnerId(), req.GetChecksumSha256())
+	if err != nil {
+		return nil, mapError(err)
+	}
+	return toProtoFile(file), nil
+}
+
+func (h *fileHandler) AbortMultipartUpload(ctx context.Context, req *filev1.AbortMultipartUploadRequest) (*filev1.AbortMultipartUploadResponse, error) {
+	if err := h.svc.AbortMultipartUpload(ctx, req.GetId(), req.GetOwnerId()); err != nil {
+		return nil, mapError(err)
+	}
+	return &filev1.AbortMultipartUploadResponse{Success: true}, nil
+}
+
 func toProtoFile(file domain.FileMetadata) *filev1.FileMetadata {
 	return &filev1.FileMetadata{
 		Id:             file.ID,
@@ -106,6 +180,20 @@ func toProtoFile(file domain.FileMetadata) *filev1.FileMetadata {
 		Status:         toProtoStatus(file.Status),
 		CreatedAt:      timestamppb.New(file.CreatedAt),
 		UpdatedAt:      timestamppb.New(file.UpdatedAt),
+		UploadMode:     toProtoUploadMode(file.UploadMode),
+		PartSizeBytes:  file.PartSize,
+		TotalParts:     file.TotalParts(),
+	}
+}
+
+func toProtoUploadMode(mode domain.UploadMode) filev1.UploadMode {
+	switch mode {
+	case domain.UploadModeSingle:
+		return filev1.UploadMode_UPLOAD_MODE_SINGLE
+	case domain.UploadModeMultipart:
+		return filev1.UploadMode_UPLOAD_MODE_MULTIPART
+	default:
+		return filev1.UploadMode_UPLOAD_MODE_UNSPECIFIED
 	}
 }
 
