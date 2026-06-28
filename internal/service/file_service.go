@@ -18,6 +18,9 @@ type FileRepository interface {
 	Confirm(ctx context.Context, id, checksum string) (domain.FileMetadata, error)
 	List(ctx context.Context, filter domain.ListFilter) (domain.ListResult, error)
 	SoftDelete(ctx context.Context, id string) error
+	SaveUploadPart(ctx context.Context, fileID string, part domain.UploadPart) error
+	ListUploadParts(ctx context.Context, fileID string) ([]domain.UploadPart, error)
+	DeleteUploadParts(ctx context.Context, fileID string) error
 }
 
 type ObjectStorage interface {
@@ -25,6 +28,10 @@ type ObjectStorage interface {
 	PresignUpload(ctx context.Context, objectKey, contentType string) (url string, expiresIn time.Duration, err error)
 	PresignDownload(ctx context.Context, objectKey string) (url string, expiresIn time.Duration, err error)
 	RemoveObject(ctx context.Context, objectKey string) error
+	CreateMultipartUpload(ctx context.Context, objectKey, contentType string) (uploadID string, err error)
+	PresignUploadPart(ctx context.Context, objectKey, uploadID string, partNumber int32) (url string, expiresIn time.Duration, err error)
+	CompleteMultipartUpload(ctx context.Context, objectKey, uploadID string, parts []domain.CompletedPart) error
+	AbortMultipartUpload(ctx context.Context, objectKey, uploadID string) error
 }
 
 type FileCache interface {
@@ -40,18 +47,20 @@ type EventPublisher interface {
 }
 
 type FileService struct {
-	repo    FileRepository
-	storage ObjectStorage
-	cache   FileCache
-	events  EventPublisher
+	repo              FileRepository
+	storage           ObjectStorage
+	cache             FileCache
+	events            EventPublisher
+	multipartPartSize int64
 }
 
-func NewFileService(repo FileRepository, storage ObjectStorage, cache FileCache, events EventPublisher) *FileService {
+func NewFileService(repo FileRepository, storage ObjectStorage, cache FileCache, events EventPublisher, multipartPartSize int64) *FileService {
 	return &FileService{
-		repo:    repo,
-		storage: storage,
-		cache:   cache,
-		events:  events,
+		repo:              repo,
+		storage:           storage,
+		cache:             cache,
+		events:            events,
+		multipartPartSize: multipartPartSize,
 	}
 }
 
@@ -79,6 +88,7 @@ func (s *FileService) CreateUpload(ctx context.Context, ownerID, originalName, c
 		ContentType:  contentType,
 		SizeBytes:    sizeBytes,
 		Status:       domain.FileStatusPending,
+		UploadMode:   domain.UploadModeSingle,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -199,7 +209,12 @@ func (s *FileService) DeleteFile(ctx context.Context, id, ownerID string) error 
 		return err
 	}
 
-	_ = s.storage.RemoveObject(ctx, file.ObjectKey)
+	if file.IsMultipart() && file.UploadID != "" && file.Status == domain.FileStatusPending {
+		_ = s.storage.AbortMultipartUpload(ctx, file.ObjectKey, file.UploadID)
+		_ = s.repo.DeleteUploadParts(ctx, id)
+	} else {
+		_ = s.storage.RemoveObject(ctx, file.ObjectKey)
+	}
 	_ = s.cache.InvalidateFile(ctx, id)
 
 	file.Status = domain.FileStatusDeleted

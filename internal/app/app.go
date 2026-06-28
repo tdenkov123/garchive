@@ -75,6 +75,16 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, er
 			return u.String(), ttl, nil
 		},
 		minioClient.RemoveObject,
+		minioClient.CreateMultipartUpload,
+		func(ctx context.Context, objectKey, uploadID string, partNumber int32) (string, time.Duration, error) {
+			u, ttl, err := minioClient.PresignUploadPart(ctx, objectKey, uploadID, partNumber)
+			if err != nil {
+				return "", 0, err
+			}
+			return u.String(), ttl, nil
+		},
+		minioClient.CompleteMultipartUpload,
+		minioClient.AbortMultipartUpload,
 	)
 
 	fileSvc := service.NewFileService(
@@ -82,6 +92,7 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, er
 		storage,
 		cache,
 		service.NewKafkaEventPublisher(kafkaPub),
+		cfg.MultipartPartSize,
 	)
 
 	grpcServer := grpc.NewServer()

@@ -12,6 +12,11 @@ import (
 	"github.com/tdenkov123/file-metadata-service/internal/domain"
 )
 
+const fileColumns = `
+	id, owner_id, bucket, object_key, original_name, content_type,
+	size_bytes, checksum_sha256, status, upload_mode, upload_id, part_size,
+	created_at, updated_at`
+
 type Repository struct {
 	pool *pgxpool.Pool
 }
@@ -24,34 +29,32 @@ func (r *Repository) Create(ctx context.Context, file domain.FileMetadata) error
 	const q = `
 		INSERT INTO files (
 			id, owner_id, bucket, object_key, original_name,
-			content_type, size_bytes, checksum_sha256, status, created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`
+			content_type, size_bytes, checksum_sha256, status,
+			upload_mode, upload_id, part_size, created_at, updated_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`
 
 	_, err := r.pool.Exec(ctx, q,
 		file.ID, file.OwnerID, file.Bucket, file.ObjectKey, file.OriginalName,
 		file.ContentType, file.SizeBytes, file.ChecksumSHA256, string(file.Status),
+		string(file.UploadMode), file.UploadID, file.PartSize,
 		file.CreatedAt, file.UpdatedAt,
 	)
 	return err
 }
 
 func (r *Repository) GetByID(ctx context.Context, id string) (domain.FileMetadata, error) {
-	const q = `
-		SELECT id, owner_id, bucket, object_key, original_name, content_type,
-		       size_bytes, checksum_sha256, status, created_at, updated_at
-		FROM files WHERE id = $1`
-
+	q := `SELECT` + fileColumns + ` FROM files WHERE id = $1`
 	row := r.pool.QueryRow(ctx, q, id)
 	return scanFile(row)
 }
 
 func (r *Repository) Confirm(ctx context.Context, id, checksum string) (domain.FileMetadata, error) {
-	const q = `
+	q := `
 		UPDATE files
-		SET status = 'ready', checksum_sha256 = $2, updated_at = $3
+		SET status = 'ready', checksum_sha256 = $2, updated_at = $3,
+		    upload_id = '', upload_mode = 'single', part_size = 0
 		WHERE id = $1 AND status = 'pending'
-		RETURNING id, owner_id, bucket, object_key, original_name, content_type,
-		          size_bytes, checksum_sha256, status, created_at, updated_at`
+		RETURNING` + fileColumns
 
 	row := r.pool.QueryRow(ctx, q, id, checksum, time.Now().UTC())
 	file, err := scanFile(row)
@@ -62,6 +65,47 @@ func (r *Repository) Confirm(ctx context.Context, id, checksum string) (domain.F
 		return domain.FileMetadata{}, err
 	}
 	return file, nil
+}
+
+func (r *Repository) SaveUploadPart(ctx context.Context, fileID string, part domain.UploadPart) error {
+	const q = `
+		INSERT INTO upload_parts (file_id, part_number, etag, uploaded_at)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (file_id, part_number) DO UPDATE
+		SET etag = EXCLUDED.etag, uploaded_at = EXCLUDED.uploaded_at`
+
+	_, err := r.pool.Exec(ctx, q, fileID, part.PartNumber, part.ETag, part.UploadedAt)
+	return err
+}
+
+func (r *Repository) ListUploadParts(ctx context.Context, fileID string) ([]domain.UploadPart, error) {
+	const q = `
+		SELECT part_number, etag, uploaded_at
+		FROM upload_parts
+		WHERE file_id = $1
+		ORDER BY part_number ASC`
+
+	rows, err := r.pool.Query(ctx, q, fileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var parts []domain.UploadPart
+	for rows.Next() {
+		var part domain.UploadPart
+		if err := rows.Scan(&part.PartNumber, &part.ETag, &part.UploadedAt); err != nil {
+			return nil, err
+		}
+		parts = append(parts, part)
+	}
+	return parts, rows.Err()
+}
+
+func (r *Repository) DeleteUploadParts(ctx context.Context, fileID string) error {
+	const q = `DELETE FROM upload_parts WHERE file_id = $1`
+	_, err := r.pool.Exec(ctx, q, fileID)
+	return err
 }
 
 func (r *Repository) List(ctx context.Context, filter domain.ListFilter) (domain.ListResult, error) {
@@ -81,9 +125,8 @@ func (r *Repository) List(ctx context.Context, filter domain.ListFilter) (domain
 		cursorID = id
 	}
 
-	const q = `
-		SELECT id, owner_id, bucket, object_key, original_name, content_type,
-		       size_bytes, checksum_sha256, status, created_at, updated_at
+	q := `
+		SELECT` + fileColumns + `
 		FROM files
 		WHERE owner_id = $1 AND status != 'deleted'
 		  AND ($2::timestamptz IS NULL OR (created_at, id) < ($2, $3))
@@ -144,10 +187,11 @@ type scannable interface {
 
 func scanFile(row scannable) (domain.FileMetadata, error) {
 	var file domain.FileMetadata
-	var status string
+	var status, uploadMode string
 	err := row.Scan(
 		&file.ID, &file.OwnerID, &file.Bucket, &file.ObjectKey, &file.OriginalName,
 		&file.ContentType, &file.SizeBytes, &file.ChecksumSHA256, &status,
+		&uploadMode, &file.UploadID, &file.PartSize,
 		&file.CreatedAt, &file.UpdatedAt,
 	)
 	if err != nil {
@@ -157,6 +201,7 @@ func scanFile(row scannable) (domain.FileMetadata, error) {
 		return domain.FileMetadata{}, err
 	}
 	file.Status = domain.FileStatus(status)
+	file.UploadMode = domain.UploadMode(uploadMode)
 	return file, nil
 }
 
