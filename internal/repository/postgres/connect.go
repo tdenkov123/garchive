@@ -35,11 +35,24 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 			size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
 			checksum_sha256 TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL CHECK (status IN ('pending', 'ready', 'deleted')),
+			upload_mode TEXT NOT NULL DEFAULT 'single' CHECK (upload_mode IN ('single', 'multipart')),
+			upload_id TEXT NOT NULL DEFAULT '',
+			part_size BIGINT NOT NULL DEFAULT 0,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
 		CREATE INDEX IF NOT EXISTS idx_files_owner_created ON files (owner_id, created_at DESC)
-			WHERE status != 'deleted';`
+			WHERE status != 'deleted';
+		ALTER TABLE files ADD COLUMN IF NOT EXISTS upload_mode TEXT NOT NULL DEFAULT 'single';
+		ALTER TABLE files ADD COLUMN IF NOT EXISTS upload_id TEXT NOT NULL DEFAULT '';
+		ALTER TABLE files ADD COLUMN IF NOT EXISTS part_size BIGINT NOT NULL DEFAULT 0;
+		CREATE TABLE IF NOT EXISTS upload_parts (
+			file_id UUID NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+			part_number INT NOT NULL CHECK (part_number > 0),
+			etag TEXT NOT NULL,
+			uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (file_id, part_number)
+		);`
 	_, err := pool.Exec(ctx, q)
 	return err
 }
