@@ -9,6 +9,12 @@ import "google/protobuf/timestamp.proto";
 service FileService {
   rpc CreateUpload(CreateUploadRequest) returns (CreateUploadResponse);
   rpc ConfirmUpload(ConfirmUploadRequest) returns (FileMetadata);
+  rpc CreateMultipartUpload(CreateMultipartUploadRequest) returns (CreateMultipartUploadResponse);
+  rpc GetPartUploadURL(GetPartUploadURLRequest) returns (GetPartUploadURLResponse);
+  rpc ReportPartUploaded(ReportPartUploadedRequest) returns (ReportPartUploadedResponse);
+  rpc ListUploadParts(ListUploadPartsRequest) returns (ListUploadPartsResponse);
+  rpc CompleteMultipartUpload(CompleteMultipartUploadRequest) returns (FileMetadata);
+  rpc AbortMultipartUpload(AbortMultipartUploadRequest) returns (AbortMultipartUploadResponse);
   rpc GetFile(GetFileRequest) returns (FileMetadata);
   rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
   rpc GetDownloadURL(GetDownloadURLRequest) returns (GetDownloadURLResponse);
@@ -20,6 +26,12 @@ enum FileStatus {
   FILE_STATUS_PENDING = 1;
   FILE_STATUS_READY = 2;
   FILE_STATUS_DELETED = 3;
+}
+
+enum UploadMode {
+  UPLOAD_MODE_UNSPECIFIED = 0;
+  UPLOAD_MODE_SINGLE = 1;
+  UPLOAD_MODE_MULTIPART = 2;
 }
 
 message FileMetadata {
@@ -34,6 +46,9 @@ message FileMetadata {
   FileStatus status = 9;
   google.protobuf.Timestamp created_at = 10;
   google.protobuf.Timestamp updated_at = 11;
+  UploadMode upload_mode = 12;
+  int64 part_size_bytes = 13;
+  int32 total_parts = 14;
 }
 
 message CreateUploadRequest {
@@ -53,6 +68,78 @@ message ConfirmUploadRequest {
   string id = 1;
   string owner_id = 2;
   string checksum_sha256 = 3;
+}
+
+message CreateMultipartUploadRequest {
+  string owner_id = 1;
+  string original_name = 2;
+  string content_type = 3;
+  int64 size_bytes = 4;
+}
+
+message CreateMultipartUploadResponse {
+  FileMetadata metadata = 1;
+  string upload_id = 2;
+  int64 part_size_bytes = 3;
+  int32 total_parts = 4;
+}
+
+message GetPartUploadURLRequest {
+  string id = 1;
+  string owner_id = 2;
+  int32 part_number = 3;
+}
+
+message GetPartUploadURLResponse {
+  string upload_url = 1;
+  int64 expires_in_seconds = 2;
+  int32 part_number = 3;
+  int64 part_size_bytes = 4;
+}
+
+message ReportPartUploadedRequest {
+  string id = 1;
+  string owner_id = 2;
+  int32 part_number = 3;
+  string etag = 4;
+}
+
+message ReportPartUploadedResponse {
+  int32 part_number = 1;
+  string etag = 2;
+}
+
+message UploadPartInfo {
+  int32 part_number = 1;
+  string etag = 2;
+  google.protobuf.Timestamp uploaded_at = 3;
+}
+
+message ListUploadPartsRequest {
+  string id = 1;
+  string owner_id = 2;
+}
+
+message ListUploadPartsResponse {
+  string upload_id = 1;
+  int64 part_size_bytes = 2;
+  int32 total_parts = 3;
+  repeated UploadPartInfo parts = 4;
+}
+
+message CompleteMultipartUploadRequest {
+  string id = 1;
+  string owner_id = 2;
+  string checksum_sha256 = 3;
+}
+
+message AbortMultipartUploadRequest {
+  string id = 1;
+  string owner_id = 2;
+}
+
+message AbortMultipartUploadResponse {
+  bool success = 1;
 }
 
 message GetFileRequest {
