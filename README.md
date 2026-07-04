@@ -1,145 +1,98 @@
 # GArchive
 
+[![CI](https://github.com/tdenkov123/garchive/actions/workflows/ci.yml/badge.svg)](https://github.com/tdenkov123/garchive/actions/workflows/ci.yml)
+
 gRPC-сервис для управления метаданными файлов с хранением объектов в S3-совместимом хранилище (MinIO), кэшированием в Redis и публикацией доменных событий в Kafka.
 
 ## Возможности
 
-- **CreateUpload** — создаёт запись метаданных и возвращает presigned URL для прямой загрузки в MinIO
-- **ConfirmUpload** — подтверждает успешную загрузку и переводит файл в статус `ready`
-- **GetFile / ListFiles** — чтение метаданных с cursor-пагинацией
-- **GetDownloadURL** — presigned URL для скачивания
-- **DeleteFile** — soft delete в Postgres + удаление объекта из MinIO + событие в Kafka
+### Single upload
+- **CreateUpload** — метаданные + presigned PUT URL
+- **ConfirmUpload** — SHA-256 checksum → статус `ready` + Kafka `file.ready`
+
+### Multipart upload
+- **CreateMultipartUpload**, **GetPartUploadURL**, **ReportPartUploaded**
+- **ListUploadParts**, **CompleteMultipartUpload**, **AbortMultipartUpload**
+
+### Read / delete
+- **GetFile / ListFiles** — cursor-пагинация
+- **GetDownloadURL** — presigned download
+- **DeleteFile** — soft delete + удаление объекта + Kafka event
+
+### Security & ops
+- JWT auth (HS256 interceptor), optional TLS
+- Rate limiting, input validation, audit logging
+- Prometheus metrics (`:9090/metrics`), gRPC health
 
 ## Стек
 
-| Компонент | Технология |
-|-----------|------------|
-| API | gRPC + Protocol Buffers |
-| БД | PostgreSQL 16 |
-| Кэш | Redis 7 |
-| Object Storage | MinIO (S3 API) |
-| Events | Kafka (KRaft) |
-| Язык | Go 1.22 |
-
-## Архитектура
-
-```
-Client ──gRPC──► FileService
-                    │
-        ┌───────────┼───────────┐
-        ▼           ▼           ▼
-   PostgreSQL    Redis       MinIO
-   (metadata)   (cache)    (objects)
-                    │
-                    ▼
-                  Kafka
-              (file.events)
-```
-
-### Поток загрузки файла
-
-1. Клиент вызывает `CreateUpload` → сервис создаёт запись `pending` и presigned PUT URL
-2. Клиент загружает файл напрямую в MinIO по presigned URL
-3. Клиент вызывает `ConfirmUpload` с SHA-256 → статус `ready`, событие `file.ready` в Kafka
+| Компонент | Версия |
+|-----------|--------|
+| Go | 1.26 |
+| gRPC | google.golang.org/grpc v1.69.4 |
+| PostgreSQL | 18.4-alpine |
+| Redis | 8.8.0-alpine |
+| MinIO | RELEASE.2025-09-07T16-13-09Z |
+| Kafka | 4.3.1 (KRaft) |
 
 ## Быстрый старт
-
-### Требования
-
-- Docker & Docker Compose
-- Go 1.22+ (для локальной разработки)
-- `protoc` + плагины (для регенерации proto)
-
-### Запуск через Docker
 
 ```bash
 cp .env.example .env
 docker compose up -d --build
 ```
 
-gRPC-сервер будет доступен на `localhost:50051`.
+gRPC: `localhost:50051` · Metrics: `localhost:9090/metrics` · MinIO Console: http://localhost:9001
 
-MinIO Console: http://localhost:9001 (minioadmin / minioadmin)
-
-### Локальная разработка
+### Authenticated grpcurl (JWT)
 
 ```bash
-# Поднять инфраструктуру
-docker compose up -d postgres redis minio kafka
+export JWT_HMAC_SECRET=change-me-in-production
+TOKEN=$(bash scripts/get-token.sh user-1)
 
-# Запустить сервер
-cp .env.example .env
-go run ./cmd/server
+grpcurl -plaintext \
+  -H "authorization: Bearer $TOKEN" \
+  -d '{"owner_id":"user-1","original_name":"doc.pdf","content_type":"application/pdf","size_bytes":1024}' \
+  localhost:50051 file.v1.FileService/CreateUpload
 ```
 
-### Пример вызова (grpcurl)
+Enable JWT: `JWT_ENABLED=true` in `.env`.
+
+### Compose profiles
 
 ```bash
-# Создать upload
-grpcurl -plaintext -d '{
-  "owner_id": "user-1",
-  "original_name": "report.pdf",
-  "content_type": "application/pdf",
-  "size_bytes": 204800
-}' localhost:50051 file.v1.FileService/CreateUpload
-
-# Подтвердить upload
-grpcurl -plaintext -d '{
-  "id": "<file-id>",
-  "owner_id": "user-1",
-  "checksum_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-}' localhost:50051 file.v1.FileService/ConfirmUpload
+docker compose --profile auth up -d keycloak    # OIDC demo IdP :8080
+docker compose --profile observability up -d jaeger
 ```
 
-## Структура проекта
+Production layout: [docker-compose.prod.yml](docker-compose.prod.yml)
 
-```
-cmd/server/          — точка входа
-api/proto/           — protobuf-контракты
-api/gen/             — сгенерированный Go-код
-internal/
-  config/            — конфигурация из env
-  domain/            — доменные модели и ошибки
-  service/           — бизнес-логика
-  repository/postgres/
-  storage/minio/
-  cache/redis/
-  events/kafka/
-  grpc/              — gRPC handlers
-  app/               — wiring / DI
-migrations/          — SQL-миграции
-```
-
-## Тесты
+## Testing strategy
 
 ```bash
-go test ./... -race -cover
+make test              # unit + race + coverage
+make test-integration  # testcontainers (Docker required)
+make test-e2e          # full upload flows
+make lint              # golangci-lint
 ```
 
-## Makefile
+| Level | Coverage target |
+|-------|-----------------|
+| Unit | ≥ 40% (CI gate 30%) |
+| Integration | postgres, redis, minio, kafka |
+| E2e | single + multipart + auth |
 
-| Команда | Описание |
-|---------|----------|
-| `make proto` | Регенерация protobuf |
-| `make build` | Сборка бинарника |
-| `make test` | Запуск тестов |
-| `make docker-up` | Docker Compose up |
-| `make docker-down` | Docker Compose down |
+## Security checklist
 
-## Kafka events
+See [docs/SECURITY.md](docs/SECURITY.md).
 
-Топик `file.events`, формат:
+## Documentation
 
-```json
-{
-  "type": "file.created | file.ready | file.deleted",
-  "file_id": "uuid",
-  "owner_id": "string",
-  "object_key": "owner/uuid/filename",
-  "timestamp": "2025-01-15T10:00:00Z"
-}
-```
+- [Architecture](docs/ARCHITECTURE.md)
+- [Security](docs/SECURITY.md)
+- [Versions / Context7 audit](docs/VERSIONS.md)
+- [ADRs](docs/ADR/)
+- [CHANGELOG](CHANGELOG.md)
 
-## Лицензия
-
-MIT
+## License
+- [MIT](LICENSE)
