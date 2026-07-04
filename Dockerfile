@@ -3,7 +3,7 @@ FROM golang:1.26-alpine AS builder
 WORKDIR /src
 RUN apk add --no-cache git ca-certificates
 
-COPY go.mod ./
+COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
@@ -13,5 +13,6 @@ FROM alpine:3.20
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=builder /server /app/server
-EXPOSE 50051
+USER 65534:65534
+EXPOSE 50051 9090
 ENTRYPOINT ["/app/server"]
