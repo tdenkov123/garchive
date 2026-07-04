@@ -11,25 +11,44 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	filev1 "github.com/tdenkov123/file-metadata-service/api/gen/file/v1"
+	"github.com/tdenkov123/file-metadata-service/internal/audit"
+	"github.com/tdenkov123/file-metadata-service/internal/auth"
 	"github.com/tdenkov123/file-metadata-service/internal/domain"
 	"github.com/tdenkov123/file-metadata-service/internal/service"
 )
 
-func Register(server *grpc.Server, svc *service.FileService, logger *slog.Logger) {
-	filev1.RegisterFileServiceServer(server, &fileHandler{svc: svc, logger: logger})
+func Register(server *grpc.Server, svc *service.FileService, logger *slog.Logger, auditLog *audit.Logger) {
+	filev1.RegisterFileServiceServer(server, &fileHandler{svc: svc, logger: logger, audit: auditLog})
 }
 
 type fileHandler struct {
 	filev1.UnimplementedFileServiceServer
 	svc    *service.FileService
 	logger *slog.Logger
+	audit  *audit.Logger
+}
+
+func (h *fileHandler) ownerID(ctx context.Context, requestOwnerID string) (string, error) {
+	ownerID, err := auth.ResolveOwnerID(ctx, requestOwnerID)
+	if err != nil {
+		return "", status.Error(codes.PermissionDenied, "owner_id mismatch")
+	}
+	if ownerID == "" {
+		return "", status.Error(codes.InvalidArgument, "owner_id is required")
+	}
+	return ownerID, nil
 }
 
 func (h *fileHandler) CreateUpload(ctx context.Context, req *filev1.CreateUploadRequest) (*filev1.CreateUploadResponse, error) {
-	result, err := h.svc.CreateUpload(ctx, req.GetOwnerId(), req.GetOriginalName(), req.GetContentType(), req.GetSizeBytes())
+	ownerID, err := h.ownerID(ctx, req.GetOwnerId())
+	if err != nil {
+		return nil, err
+	}
+	result, err := h.svc.CreateUpload(ctx, ownerID, req.GetOriginalName(), req.GetContentType(), req.GetSizeBytes())
 	if err != nil {
 		return nil, mapError(err)
 	}
+	h.audit.Log(ctx, "file.created", "owner_id", ownerID, "file_id", result.Metadata.ID)
 	return &filev1.CreateUploadResponse{
 		Metadata:         toProtoFile(result.Metadata),
 		UploadUrl:        result.UploadURL,
@@ -38,15 +57,24 @@ func (h *fileHandler) CreateUpload(ctx context.Context, req *filev1.CreateUpload
 }
 
 func (h *fileHandler) ConfirmUpload(ctx context.Context, req *filev1.ConfirmUploadRequest) (*filev1.FileMetadata, error) {
-	file, err := h.svc.ConfirmUpload(ctx, req.GetId(), req.GetOwnerId(), req.GetChecksumSha256())
+	ownerID, err := h.ownerID(ctx, req.GetOwnerId())
+	if err != nil {
+		return nil, err
+	}
+	file, err := h.svc.ConfirmUpload(ctx, req.GetId(), ownerID, req.GetChecksumSha256())
 	if err != nil {
 		return nil, mapError(err)
 	}
+	h.audit.Log(ctx, "upload.confirmed", "owner_id", ownerID, "file_id", file.ID)
 	return toProtoFile(file), nil
 }
 
 func (h *fileHandler) GetFile(ctx context.Context, req *filev1.GetFileRequest) (*filev1.FileMetadata, error) {
-	file, err := h.svc.GetFile(ctx, req.GetId(), req.GetOwnerId())
+	ownerID, err := h.ownerID(ctx, req.GetOwnerId())
+	if err != nil {
+		return nil, err
+	}
+	file, err := h.svc.GetFile(ctx, req.GetId(), ownerID)
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -54,8 +82,12 @@ func (h *fileHandler) GetFile(ctx context.Context, req *filev1.GetFileRequest) (
 }
 
 func (h *fileHandler) ListFiles(ctx context.Context, req *filev1.ListFilesRequest) (*filev1.ListFilesResponse, error) {
+	ownerID, err := h.ownerID(ctx, req.GetOwnerId())
+	if err != nil {
+		return nil, err
+	}
 	result, err := h.svc.ListFiles(ctx, domain.ListFilter{
-		OwnerID:   req.GetOwnerId(),
+		OwnerID:   ownerID,
 		PageSize:  req.GetPageSize(),
 		PageToken: req.GetPageToken(),
 	})
@@ -76,7 +108,11 @@ func (h *fileHandler) ListFiles(ctx context.Context, req *filev1.ListFilesReques
 }
 
 func (h *fileHandler) GetDownloadURL(ctx context.Context, req *filev1.GetDownloadURLRequest) (*filev1.GetDownloadURLResponse, error) {
-	result, err := h.svc.GetDownloadURL(ctx, req.GetId(), req.GetOwnerId())
+	ownerID, err := h.ownerID(ctx, req.GetOwnerId())
+	if err != nil {
+		return nil, err
+	}
+	result, err := h.svc.GetDownloadURL(ctx, req.GetId(), ownerID)
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -87,27 +123,41 @@ func (h *fileHandler) GetDownloadURL(ctx context.Context, req *filev1.GetDownloa
 }
 
 func (h *fileHandler) DeleteFile(ctx context.Context, req *filev1.DeleteFileRequest) (*filev1.DeleteFileResponse, error) {
-	if err := h.svc.DeleteFile(ctx, req.GetId(), req.GetOwnerId()); err != nil {
+	ownerID, err := h.ownerID(ctx, req.GetOwnerId())
+	if err != nil {
+		return nil, err
+	}
+	if err := h.svc.DeleteFile(ctx, req.GetId(), ownerID); err != nil {
 		return nil, mapError(err)
 	}
+	h.audit.Log(ctx, "file.deleted", "owner_id", ownerID, "file_id", req.GetId())
 	return &filev1.DeleteFileResponse{Success: true}, nil
 }
 
 func (h *fileHandler) CreateMultipartUpload(ctx context.Context, req *filev1.CreateMultipartUploadRequest) (*filev1.CreateMultipartUploadResponse, error) {
-	result, err := h.svc.CreateMultipartUpload(ctx, req.GetOwnerId(), req.GetOriginalName(), req.GetContentType(), req.GetSizeBytes())
+	ownerID, err := h.ownerID(ctx, req.GetOwnerId())
+	if err != nil {
+		return nil, err
+	}
+	result, err := h.svc.CreateMultipartUpload(ctx, ownerID, req.GetOriginalName(), req.GetContentType(), req.GetSizeBytes())
 	if err != nil {
 		return nil, mapError(err)
 	}
+	h.audit.Log(ctx, "file.created", "owner_id", ownerID, "file_id", result.Metadata.ID, "multipart", true)
 	return &filev1.CreateMultipartUploadResponse{
-		Metadata:       toProtoFile(result.Metadata),
-		UploadId:       result.UploadID,
-		PartSizeBytes:  result.PartSize,
-		TotalParts:     result.TotalParts,
+		Metadata:      toProtoFile(result.Metadata),
+		UploadId:      result.UploadID,
+		PartSizeBytes: result.PartSize,
+		TotalParts:    result.TotalParts,
 	}, nil
 }
 
 func (h *fileHandler) GetPartUploadURL(ctx context.Context, req *filev1.GetPartUploadURLRequest) (*filev1.GetPartUploadURLResponse, error) {
-	result, err := h.svc.GetPartUploadURL(ctx, req.GetId(), req.GetOwnerId(), req.GetPartNumber())
+	ownerID, err := h.ownerID(ctx, req.GetOwnerId())
+	if err != nil {
+		return nil, err
+	}
+	result, err := h.svc.GetPartUploadURL(ctx, req.GetId(), ownerID, req.GetPartNumber())
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -120,7 +170,11 @@ func (h *fileHandler) GetPartUploadURL(ctx context.Context, req *filev1.GetPartU
 }
 
 func (h *fileHandler) ReportPartUploaded(ctx context.Context, req *filev1.ReportPartUploadedRequest) (*filev1.ReportPartUploadedResponse, error) {
-	part, err := h.svc.ReportPartUploaded(ctx, req.GetId(), req.GetOwnerId(), req.GetPartNumber(), req.GetEtag())
+	ownerID, err := h.ownerID(ctx, req.GetOwnerId())
+	if err != nil {
+		return nil, err
+	}
+	part, err := h.svc.ReportPartUploaded(ctx, req.GetId(), ownerID, req.GetPartNumber(), req.GetEtag())
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -131,7 +185,11 @@ func (h *fileHandler) ReportPartUploaded(ctx context.Context, req *filev1.Report
 }
 
 func (h *fileHandler) ListUploadParts(ctx context.Context, req *filev1.ListUploadPartsRequest) (*filev1.ListUploadPartsResponse, error) {
-	result, err := h.svc.ListUploadParts(ctx, req.GetId(), req.GetOwnerId())
+	ownerID, err := h.ownerID(ctx, req.GetOwnerId())
+	if err != nil {
+		return nil, err
+	}
+	result, err := h.svc.ListUploadParts(ctx, req.GetId(), ownerID)
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -153,15 +211,24 @@ func (h *fileHandler) ListUploadParts(ctx context.Context, req *filev1.ListUploa
 }
 
 func (h *fileHandler) CompleteMultipartUpload(ctx context.Context, req *filev1.CompleteMultipartUploadRequest) (*filev1.FileMetadata, error) {
-	file, err := h.svc.CompleteMultipartUpload(ctx, req.GetId(), req.GetOwnerId(), req.GetChecksumSha256())
+	ownerID, err := h.ownerID(ctx, req.GetOwnerId())
+	if err != nil {
+		return nil, err
+	}
+	file, err := h.svc.CompleteMultipartUpload(ctx, req.GetId(), ownerID, req.GetChecksumSha256())
 	if err != nil {
 		return nil, mapError(err)
 	}
+	h.audit.Log(ctx, "upload.confirmed", "owner_id", ownerID, "file_id", file.ID, "multipart", true)
 	return toProtoFile(file), nil
 }
 
 func (h *fileHandler) AbortMultipartUpload(ctx context.Context, req *filev1.AbortMultipartUploadRequest) (*filev1.AbortMultipartUploadResponse, error) {
-	if err := h.svc.AbortMultipartUpload(ctx, req.GetId(), req.GetOwnerId()); err != nil {
+	ownerID, err := h.ownerID(ctx, req.GetOwnerId())
+	if err != nil {
+		return nil, err
+	}
+	if err := h.svc.AbortMultipartUpload(ctx, req.GetId(), ownerID); err != nil {
 		return nil, mapError(err)
 	}
 	return &filev1.AbortMultipartUploadResponse{Success: true}, nil
