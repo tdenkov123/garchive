@@ -8,8 +8,14 @@
 
 # Test & coverage
 *.out
+coverage.out
 coverage.html
 coverage.txt
+coverage
+cov
+$cov
+all.out
+cov.txt
 
 # IDE
 .idea/
