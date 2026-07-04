@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -142,7 +143,7 @@ func (m *mockEvents) PublishFileReady(_ context.Context, _ domain.FileMetadata) 
 func (m *mockEvents) PublishFileDeleted(_ context.Context, _ domain.FileMetadata) error { return nil }
 
 func newTestService(repo *mockRepo) *service.FileService {
-	return service.NewFileService(repo, &mockStorage{bucket: "files"}, &mockCache{}, &mockEvents{}, testPartSize)
+	return service.NewFileService(repo, &mockStorage{bucket: "files"}, &mockCache{}, &mockEvents{}, testPartSize, 5*1024*1024*1024)
 }
 
 func TestFileService_CreateAndConfirmUpload(t *testing.T) {
@@ -155,10 +156,11 @@ func TestFileService_CreateAndConfirmUpload(t *testing.T) {
 	assert.Equal(t, domain.FileStatusPending, result.Metadata.Status)
 	assert.Contains(t, result.UploadURL, "https://")
 
-	confirmed, err := svc.ConfirmUpload(context.Background(), result.Metadata.ID, "user-1", "abc123")
+	checksum := strings.Repeat("a", 64)
+	confirmed, err := svc.ConfirmUpload(context.Background(), result.Metadata.ID, "user-1", checksum)
 	require.NoError(t, err)
 	assert.Equal(t, domain.FileStatusReady, confirmed.Status)
-	assert.Equal(t, "abc123", confirmed.ChecksumSHA256)
+	assert.Equal(t, checksum, confirmed.ChecksumSHA256)
 }
 
 func TestFileService_GetFile_AccessDenied(t *testing.T) {
@@ -190,7 +192,7 @@ func TestFileService_DeleteFile(t *testing.T) {
 	result, err := svc.CreateUpload(context.Background(), "user-1", "doc.pdf", "application/pdf", 1024)
 	require.NoError(t, err)
 
-	_, err = svc.ConfirmUpload(context.Background(), result.Metadata.ID, "user-1", "hash")
+	_, err = svc.ConfirmUpload(context.Background(), result.Metadata.ID, "user-1", strings.Repeat("c", 64))
 	require.NoError(t, err)
 
 	err = svc.DeleteFile(context.Background(), result.Metadata.ID, "user-1")
@@ -225,7 +227,7 @@ func TestFileService_MultipartUploadFlow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, listed.Parts, 2)
 
-	ready, err := svc.CompleteMultipartUpload(context.Background(), created.Metadata.ID, "user-1", "checksum")
+	ready, err := svc.CompleteMultipartUpload(context.Background(), created.Metadata.ID, "user-1", strings.Repeat("d", 64))
 	require.NoError(t, err)
 	assert.Equal(t, domain.FileStatusReady, ready.Status)
 }
@@ -254,4 +256,126 @@ func TestFileService_ListUploadParts_Resume(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, listed.Parts, 1)
 	assert.Equal(t, int32(1), listed.Parts[0].PartNumber)
+}
+
+type trackingCache struct {
+	hits  int
+	store map[string]domain.FileMetadata
+}
+
+func (c *trackingCache) GetFile(_ context.Context, id string) (domain.FileMetadata, bool, error) {
+	if file, ok := c.store[id]; ok {
+		c.hits++
+		return file, true, nil
+	}
+	return domain.FileMetadata{}, false, nil
+}
+
+func (c *trackingCache) SetFile(_ context.Context, file domain.FileMetadata) error {
+	if c.store == nil {
+		c.store = make(map[string]domain.FileMetadata)
+	}
+	c.store[file.ID] = file
+	return nil
+}
+
+func (c *trackingCache) InvalidateFile(_ context.Context, id string) error {
+	delete(c.store, id)
+	return nil
+}
+
+type trackingEvents struct {
+	created int
+	ready   int
+	deleted int
+}
+
+func (e *trackingEvents) PublishFileCreated(_ context.Context, _ domain.FileMetadata) error {
+	e.created++
+	return nil
+}
+
+func (e *trackingEvents) PublishFileReady(_ context.Context, _ domain.FileMetadata) error {
+	e.ready++
+	return nil
+}
+
+func (e *trackingEvents) PublishFileDeleted(_ context.Context, _ domain.FileMetadata) error {
+	e.deleted++
+	return nil
+}
+
+func TestFileService_ListFiles(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+
+	_, err := svc.CreateUpload(context.Background(), "user-1", "a.pdf", "application/pdf", 100)
+	require.NoError(t, err)
+	_, err = svc.CreateUpload(context.Background(), "user-1", "b.pdf", "application/pdf", 200)
+	require.NoError(t, err)
+
+	result, err := svc.ListFiles(context.Background(), domain.ListFilter{OwnerID: "user-1"})
+	require.NoError(t, err)
+	assert.Len(t, result.Files, 2)
+}
+
+func TestFileService_GetDownloadURL_Success(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+
+	created, err := svc.CreateUpload(context.Background(), "user-1", "doc.pdf", "application/pdf", 1024)
+	require.NoError(t, err)
+	_, err = svc.ConfirmUpload(context.Background(), created.Metadata.ID, "user-1", strings.Repeat("a", 64))
+	require.NoError(t, err)
+
+	dl, err := svc.GetDownloadURL(context.Background(), created.Metadata.ID, "user-1")
+	require.NoError(t, err)
+	assert.Contains(t, dl.URL, "https://")
+}
+
+func TestFileService_AbortMultipartUpload(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+
+	created, err := svc.CreateMultipartUpload(context.Background(), "user-1", "big.bin", "application/octet-stream", int64(testPartSize+1))
+	require.NoError(t, err)
+
+	err = svc.AbortMultipartUpload(context.Background(), created.Metadata.ID, "user-1")
+	require.NoError(t, err)
+
+	_, err = svc.GetFile(context.Background(), created.Metadata.ID, "user-1")
+	require.ErrorIs(t, err, domain.ErrNotFound)
+}
+
+func TestFileService_GetFile_CacheHit(t *testing.T) {
+	repo := newMockRepo()
+	cache := &trackingCache{store: make(map[string]domain.FileMetadata)}
+	svc := service.NewFileService(repo, &mockStorage{bucket: "files"}, cache, &mockEvents{}, testPartSize, 5*1024*1024*1024)
+
+	created, err := svc.CreateUpload(context.Background(), "user-1", "doc.pdf", "application/pdf", 1024)
+	require.NoError(t, err)
+
+	_, err = svc.GetFile(context.Background(), created.Metadata.ID, "user-1")
+	require.NoError(t, err)
+	_, err = svc.GetFile(context.Background(), created.Metadata.ID, "user-1")
+	require.NoError(t, err)
+	assert.Equal(t, 2, cache.hits)
+}
+
+func TestFileService_EventsPublished(t *testing.T) {
+	repo := newMockRepo()
+	events := &trackingEvents{}
+	svc := service.NewFileService(repo, &mockStorage{bucket: "files"}, &mockCache{}, events, testPartSize, 5*1024*1024*1024)
+
+	created, err := svc.CreateUpload(context.Background(), "user-1", "doc.pdf", "application/pdf", 1024)
+	require.NoError(t, err)
+	assert.Equal(t, 1, events.created)
+
+	_, err = svc.ConfirmUpload(context.Background(), created.Metadata.ID, "user-1", strings.Repeat("b", 64))
+	require.NoError(t, err)
+	assert.Equal(t, 1, events.ready)
+
+	err = svc.DeleteFile(context.Background(), created.Metadata.ID, "user-1")
+	require.NoError(t, err)
+	assert.Equal(t, 1, events.deleted)
 }

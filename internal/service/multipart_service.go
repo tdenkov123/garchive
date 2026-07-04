@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/tdenkov123/file-metadata-service/internal/domain"
+	"github.com/tdenkov123/file-metadata-service/internal/validation"
 )
 
 type CreateMultipartUploadResult struct {
@@ -34,7 +35,7 @@ type ListUploadPartsResult struct {
 }
 
 func (s *FileService) CreateMultipartUpload(ctx context.Context, ownerID, originalName, contentType string, sizeBytes int64) (CreateMultipartUploadResult, error) {
-	if err := validateCreateInput(ownerID, originalName, contentType, sizeBytes); err != nil {
+	if err := validateCreateInput(ownerID, originalName, contentType, sizeBytes, s.maxFileSizeBytes); err != nil {
 		return CreateMultipartUploadResult{}, err
 	}
 	if sizeBytes <= s.multipartPartSize {
@@ -151,6 +152,9 @@ func (s *FileService) ListUploadParts(ctx context.Context, id, ownerID string) (
 func (s *FileService) CompleteMultipartUpload(ctx context.Context, id, ownerID, checksum string) (domain.FileMetadata, error) {
 	if id == "" || ownerID == "" {
 		return domain.FileMetadata{}, domain.ErrInvalidInput
+	}
+	if err := validation.ChecksumSHA256(checksum); err != nil {
+		return domain.FileMetadata{}, err
 	}
 
 	file, err := s.getPendingMultipart(ctx, id, ownerID)
