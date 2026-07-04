@@ -53,7 +53,7 @@ jobs:
           echo "Total coverage (internal/): ${total}%"
           awk -v c="$total" 'BEGIN { exit (c+0 >= 25) ? 0 : 1 }'
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         if: always()
         with:
           files: coverage.out
