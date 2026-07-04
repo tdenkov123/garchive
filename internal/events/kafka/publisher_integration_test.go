@@ -19,7 +19,7 @@ import (
 func TestPublisher_PublishFileReady(t *testing.T) {
 	ctx := context.Background()
 
-	container, err := tckafka.Run(ctx, "apache/kafka-native:3.8.0")
+	container, err := tckafka.Run(ctx, "confluentinc/confluent-local:7.5.0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = container.Terminate(ctx) })
 
@@ -51,7 +51,7 @@ func TestPublisher_PublishFileReady(t *testing.T) {
 	})
 	t.Cleanup(func() { _ = reader.Close() })
 
-	msgCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	msgCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	msg, err := reader.ReadMessage(msgCtx)

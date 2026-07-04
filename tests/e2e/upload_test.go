@@ -31,7 +31,7 @@ func setupEnv(t *testing.T) (grpcAddr string, jwtSecret string) {
 	t.Helper()
 	ctx := context.Background()
 
-	pg, err := tcpostgres.Run(ctx, "postgres:18.4-alpine",
+	pg, err := tcpostgres.Run(ctx, "postgres:16-alpine",
 		tcpostgres.WithDatabase("fms"),
 		tcpostgres.WithUsername("fms"),
 		tcpostgres.WithPassword("fms"),
@@ -47,7 +47,7 @@ func setupEnv(t *testing.T) (grpcAddr string, jwtSecret string) {
 	redisAddr, err := rd.Endpoint(ctx, "")
 	require.NoError(t, err)
 
-	kf, err := tckafka.Run(ctx, "apache/kafka-native:3.8.0")
+	kf, err := tckafka.Run(ctx, "confluentinc/confluent-local:7.5.0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = kf.Terminate(ctx) })
 	brokers, err := kf.Brokers(ctx)
@@ -243,7 +243,7 @@ func TestE2E_AuthDeniedWithoutToken(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	pg, err := tcpostgres.Run(ctx, "postgres:18.4-alpine",
+	pg, err := tcpostgres.Run(ctx, "postgres:16-alpine",
 		tcpostgres.WithDatabase("fms"),
 		tcpostgres.WithUsername("fms"),
 		tcpostgres.WithPassword("fms"),
@@ -259,7 +259,7 @@ func TestE2E_AuthDeniedWithoutToken(t *testing.T) {
 	redisAddr, err := rd.Endpoint(ctx, "")
 	require.NoError(t, err)
 
-	kf, err := tckafka.Run(ctx, "apache/kafka-native:3.8.0")
+	kf, err := tckafka.Run(ctx, "confluentinc/confluent-local:7.5.0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = kf.Terminate(ctx) })
 	brokers, err := kf.Brokers(ctx)

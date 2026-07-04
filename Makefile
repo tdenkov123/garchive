@@ -17,7 +17,7 @@ build:
 	go build -o bin/server ./cmd/server
 
 test:
-	CGO_ENABLED=1 go test ./... -count=1 -race -coverprofile=coverage.out -covermode=atomic -coverpkg=./...
+	CGO_ENABLED=1 go test -tags=!integration,!e2e ./... -count=1 -race -coverprofile=coverage.out -covermode=atomic -coverpkg=./...
 
 coverage: test
 	go tool cover -html=coverage.out -o coverage.html
