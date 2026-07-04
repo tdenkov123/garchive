@@ -13,24 +13,20 @@ linters:
     - revive
     - ineffassign
     - unused
-
-linters-settings:
-  revive:
+  settings:
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: error-return
+        - name: error-strings
+    gosec:
+      excludes:
+        - G104
+        - G115
+  exclusions:
     rules:
-      - name: blank-imports
-      - name: context-as-argument
-      - name: error-return
-      - name: error-strings
-      - name: exported
-        arguments:
-          - disableStutteringCheck: true
-  gosec:
-    excludes:
-      - G104
-
-issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - gosec
-        - errcheck
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck

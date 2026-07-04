@@ -16,6 +16,34 @@ import (
 	kafkapub "github.com/tdenkov123/file-metadata-service/internal/events/kafka"
 )
 
+func ensureTopic(t *testing.T, ctx context.Context, broker, topic string) {
+	t.Helper()
+
+	conn, err := kafkago.DialContext(ctx, "tcp", broker)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	err = conn.CreateTopics(kafkago.TopicConfig{
+		Topic:             topic,
+		NumPartitions:     1,
+		ReplicationFactor: 1,
+	})
+	if err != nil {
+		require.Contains(t, err.Error(), "Topic already exists")
+	}
+
+	require.Eventually(t, func() bool {
+		metaConn, dialErr := kafkago.DialContext(ctx, "tcp", broker)
+		if dialErr != nil {
+			return false
+		}
+		defer metaConn.Close()
+
+		partitions, readErr := metaConn.ReadPartitions(topic)
+		return readErr == nil && len(partitions) > 0
+	}, 30*time.Second, 500*time.Millisecond, "topic %q was not visible in cluster metadata", topic)
+}
+
 func TestPublisher_PublishFileReady(t *testing.T) {
 	ctx := context.Background()
 
@@ -27,7 +55,9 @@ func TestPublisher_PublishFileReady(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, brokers)
 
-	topic := "file.events"
+	topic := "file.events-" + uuid.NewString()
+	ensureTopic(t, ctx, brokers[0], topic)
+
 	pub := kafkapub.NewPublisher(&config.Config{
 		KafkaBrokers: brokers,
 		KafkaTopic:   topic,
