@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/tdenkov123/file-metadata-service/internal/domain"
+	"github.com/tdenkov123/file-metadata-service/internal/validation"
 )
 
 type FileRepository interface {
@@ -52,15 +53,17 @@ type FileService struct {
 	cache             FileCache
 	events            EventPublisher
 	multipartPartSize int64
+	maxFileSizeBytes  int64
 }
 
-func NewFileService(repo FileRepository, storage ObjectStorage, cache FileCache, events EventPublisher, multipartPartSize int64) *FileService {
+func NewFileService(repo FileRepository, storage ObjectStorage, cache FileCache, events EventPublisher, multipartPartSize, maxFileSizeBytes int64) *FileService {
 	return &FileService{
 		repo:              repo,
 		storage:           storage,
 		cache:             cache,
 		events:            events,
 		multipartPartSize: multipartPartSize,
+		maxFileSizeBytes:  maxFileSizeBytes,
 	}
 }
 
@@ -71,7 +74,7 @@ type CreateUploadResult struct {
 }
 
 func (s *FileService) CreateUpload(ctx context.Context, ownerID, originalName, contentType string, sizeBytes int64) (CreateUploadResult, error) {
-	if err := validateCreateInput(ownerID, originalName, contentType, sizeBytes); err != nil {
+	if err := validateCreateInput(ownerID, originalName, contentType, sizeBytes, s.maxFileSizeBytes); err != nil {
 		return CreateUploadResult{}, err
 	}
 
@@ -115,6 +118,9 @@ func (s *FileService) CreateUpload(ctx context.Context, ownerID, originalName, c
 func (s *FileService) ConfirmUpload(ctx context.Context, id, ownerID, checksum string) (domain.FileMetadata, error) {
 	if id == "" || ownerID == "" {
 		return domain.FileMetadata{}, domain.ErrInvalidInput
+	}
+	if err := validation.ChecksumSHA256(checksum); err != nil {
+		return domain.FileMetadata{}, err
 	}
 
 	existing, err := s.repo.GetByID(ctx, id)
@@ -172,8 +178,8 @@ func (s *FileService) GetFile(ctx context.Context, id, ownerID string) (domain.F
 }
 
 func (s *FileService) ListFiles(ctx context.Context, filter domain.ListFilter) (domain.ListResult, error) {
-	if filter.OwnerID == "" {
-		return domain.ListResult{}, domain.ErrInvalidInput
+	if err := validation.OwnerID(filter.OwnerID); err != nil {
+		return domain.ListResult{}, err
 	}
 	return s.repo.List(ctx, filter)
 }
@@ -224,14 +230,8 @@ func (s *FileService) DeleteFile(ctx context.Context, id, ownerID string) error 
 	return nil
 }
 
-func validateCreateInput(ownerID, originalName, contentType string, sizeBytes int64) error {
-	if ownerID == "" || originalName == "" || contentType == "" {
-		return domain.ErrInvalidInput
-	}
-	if sizeBytes <= 0 {
-		return domain.ErrInvalidInput
-	}
-	return nil
+func validateCreateInput(ownerID, originalName, contentType string, sizeBytes, maxSize int64) error {
+	return validation.CreateUploadInput(ownerID, originalName, contentType, sizeBytes, maxSize)
 }
 
 func sanitizeFilename(name string) string {
