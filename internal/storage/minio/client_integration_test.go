@@ -25,8 +25,9 @@ func TestClient_PresignUploadDownload(t *testing.T) {
 			"MINIO_ROOT_USER":     "minioadmin",
 			"MINIO_ROOT_PASSWORD": "minioadmin",
 		},
-		Cmd:        []string{"server", "/data"},
-		WaitingFor: wait.ForHTTP("/minio/health/live").WithPort("9000/tcp"),
+		Cmd: []string{"server", "/data"},
+		// live returns before S3 is ready; ready waits for usable API.
+		WaitingFor: wait.ForHTTP("/minio/health/ready").WithPort("9000/tcp").WithStartupTimeout(60 * time.Second),
 	}
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
@@ -50,7 +51,10 @@ func TestClient_PresignUploadDownload(t *testing.T) {
 		PresignTTL:     5 * time.Minute,
 	})
 	require.NoError(t, err)
-	require.NoError(t, client.EnsureBucket(ctx))
+
+	require.Eventually(t, func() bool {
+		return client.EnsureBucket(ctx) == nil
+	}, 30*time.Second, 500*time.Millisecond)
 
 	uploadURL, _, err := client.PresignUpload(ctx, "user-1/obj.bin", "application/octet-stream")
 	require.NoError(t, err)

@@ -62,7 +62,7 @@ func setupEnv(t *testing.T) (grpcAddr string, jwtSecret string) {
 				"MINIO_ROOT_PASSWORD": "minioadmin",
 			},
 			Cmd:        []string{"server", "/data"},
-			WaitingFor: wait.ForHTTP("/minio/health/live").WithPort("9000/tcp"),
+			WaitingFor: wait.ForHTTP("/minio/health/ready").WithPort("9000/tcp").WithStartupTimeout(60 * time.Second),
 		},
 		Started: true,
 	})
@@ -274,7 +274,7 @@ func TestE2E_AuthDeniedWithoutToken(t *testing.T) {
 				"MINIO_ROOT_PASSWORD": "minioadmin",
 			},
 			Cmd:        []string{"server", "/data"},
-			WaitingFor: wait.ForHTTP("/minio/health/live").WithPort("9000/tcp"),
+			WaitingFor: wait.ForHTTP("/minio/health/ready").WithPort("9000/tcp").WithStartupTimeout(60 * time.Second),
 		},
 		Started: true,
 	})
