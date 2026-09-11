@@ -26,7 +26,7 @@ func TestRateLimiter(t *testing.T) {
 	rl := middleware.NewRateLimiter(1000, 10)
 	interceptor := rl.UnaryServerInterceptor()
 	ok := 0
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		_, err := interceptor(context.Background(), nil, &grpc.UnaryServerInfo{}, func(ctx context.Context, req any) (any, error) {
 			ok++
 			return nil, nil
