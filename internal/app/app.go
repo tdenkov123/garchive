@@ -146,6 +146,10 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, er
 
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("/metrics", promhttp.Handler())
+	metricsMux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
 	metricsSrv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.MetricsPort),
 		Handler:           metricsMux,
