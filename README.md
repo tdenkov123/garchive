@@ -29,7 +29,7 @@ gRPC-сервис для управления метаданными файло�
 | Компонент | Версия |
 |-----------|--------|
 | Go | 1.26 |
-| gRPC | google.golang.org/grpc v1.82.0 |
+| gRPC | google.golang.org/grpc v1.83.2 |
 | pgx | github.com/jackc/pgx/v5 v5.10.0 |
 | go-redis | github.com/redis/go-redis/v9 v9.7.3 |
 | PostgreSQL | 18.4-alpine |

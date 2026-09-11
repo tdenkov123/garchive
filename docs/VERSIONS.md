@@ -1,11 +1,11 @@
 # Stack Versions
 
-Last Context7 audit: **2026-07-04**
+Last Context7 audit: **2026-09-11**
 
 | Component | Version | CVE / advisory | Min safe | Source |
 |-----------|---------|----------------|----------|--------|
 | pgx | v5.10.0 | GO-2026-5004 | ≥ v5.9.2 | Context7 `/jackc/pgx`, govulncheck |
-| gRPC | v1.82.0 | GO-2026-4762 | ≥ v1.79.3 | Context7 `/grpc/grpc-go`, govulncheck |
+| gRPC | v1.83.2 | CVE-2026-84445 | ≥ v1.83.2 | Context7 `/grpc/grpc-go`, Trivy |
 | go-redis | v9.7.3 | GO-2025-3540 | ≥ v9.7.3 | Context7 `/redis/go-redis`, govulncheck |
 | kafka-go | v0.4.51 | — | latest patch | go list -u |
 | golang.org/x/net | v0.55.0 | GO-2026-5026+ | ≥ v0.55.0 | govulncheck |
