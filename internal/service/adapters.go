@@ -2,20 +2,23 @@ package service
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"github.com/tdenkov123/file-metadata-service/internal/domain"
 )
 
 type StorageAdapter struct {
-	bucketFn              func() string
-	presignUpload         func(ctx context.Context, objectKey, contentType string) (string, time.Duration, error)
-	presignDown           func(ctx context.Context, objectKey string) (string, time.Duration, error)
-	remove                func(ctx context.Context, objectKey string) error
-	createMultipart       func(ctx context.Context, objectKey, contentType string) (string, error)
-	presignUploadPart     func(ctx context.Context, objectKey, uploadID string, partNumber int32) (string, time.Duration, error)
-	completeMultipart     func(ctx context.Context, objectKey, uploadID string, parts []domain.CompletedPart) error
-	abortMultipart        func(ctx context.Context, objectKey, uploadID string) error
+	bucketFn          func() string
+	presignUpload     func(ctx context.Context, objectKey, contentType string) (string, time.Duration, error)
+	presignDown       func(ctx context.Context, objectKey string) (string, time.Duration, error)
+	remove            func(ctx context.Context, objectKey string) error
+	putObject         func(ctx context.Context, objectKey, contentType string, r io.Reader, size int64) error
+	getObject         func(ctx context.Context, objectKey string) (io.ReadCloser, error)
+	createMultipart   func(ctx context.Context, objectKey, contentType string) (string, error)
+	presignUploadPart func(ctx context.Context, objectKey, uploadID string, partNumber int32) (string, time.Duration, error)
+	completeMultipart func(ctx context.Context, objectKey, uploadID string, parts []domain.CompletedPart) error
+	abortMultipart    func(ctx context.Context, objectKey, uploadID string) error
 }
 
 func NewStorageAdapter(
@@ -23,6 +26,8 @@ func NewStorageAdapter(
 	presignUpload func(ctx context.Context, objectKey, contentType string) (string, time.Duration, error),
 	presignDown func(ctx context.Context, objectKey string) (string, time.Duration, error),
 	remove func(ctx context.Context, objectKey string) error,
+	putObject func(ctx context.Context, objectKey, contentType string, r io.Reader, size int64) error,
+	getObject func(ctx context.Context, objectKey string) (io.ReadCloser, error),
 	createMultipart func(ctx context.Context, objectKey, contentType string) (string, error),
 	presignUploadPart func(ctx context.Context, objectKey, uploadID string, partNumber int32) (string, time.Duration, error),
 	completeMultipart func(ctx context.Context, objectKey, uploadID string, parts []domain.CompletedPart) error,
@@ -30,10 +35,12 @@ func NewStorageAdapter(
 ) *StorageAdapter {
 	return &StorageAdapter{
 		bucketFn:          bucketFn,
-		presignUpload:   presignUpload,
-		presignDown:     presignDown,
-		remove:          remove,
-		createMultipart: createMultipart,
+		presignUpload:     presignUpload,
+		presignDown:       presignDown,
+		remove:            remove,
+		putObject:         putObject,
+		getObject:         getObject,
+		createMultipart:   createMultipart,
 		presignUploadPart: presignUploadPart,
 		completeMultipart: completeMultipart,
 		abortMultipart:    abortMultipart,
@@ -54,6 +61,14 @@ func (a *StorageAdapter) PresignDownload(ctx context.Context, objectKey string) 
 
 func (a *StorageAdapter) RemoveObject(ctx context.Context, objectKey string) error {
 	return a.remove(ctx, objectKey)
+}
+
+func (a *StorageAdapter) PutObject(ctx context.Context, objectKey, contentType string, r io.Reader, size int64) error {
+	return a.putObject(ctx, objectKey, contentType, r, size)
+}
+
+func (a *StorageAdapter) GetObject(ctx context.Context, objectKey string) (io.ReadCloser, error) {
+	return a.getObject(ctx, objectKey)
 }
 
 func (a *StorageAdapter) CreateMultipartUpload(ctx context.Context, objectKey, contentType string) (string, error) {

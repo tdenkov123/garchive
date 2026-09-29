@@ -23,6 +23,7 @@ import (
 	"github.com/tdenkov123/file-metadata-service/internal/events/kafka"
 	grpchandler "github.com/tdenkov123/file-metadata-service/internal/grpc"
 	grpcmw "github.com/tdenkov123/file-metadata-service/internal/grpc/middleware"
+	"github.com/tdenkov123/file-metadata-service/internal/httpapi"
 	"github.com/tdenkov123/file-metadata-service/internal/repository/postgres"
 	"github.com/tdenkov123/file-metadata-service/internal/service"
 	"github.com/tdenkov123/file-metadata-service/internal/storage/minio"
@@ -33,6 +34,7 @@ type App struct {
 	cfg          *config.Config
 	grpcServer   *grpc.Server
 	metricsSrv   *http.Server
+	httpSrv      *http.Server
 	pgPool       *pgxpool.Pool
 	kafkaPub     *kafka.Publisher
 	logger       *slog.Logger
@@ -85,6 +87,8 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, er
 			return u.String(), ttl, nil
 		},
 		minioClient.RemoveObject,
+		minioClient.PutObject,
+		minioClient.GetObject,
 		minioClient.CreateMultipartUpload,
 		func(ctx context.Context, objectKey, uploadID string, partNumber int32) (string, time.Duration, error) {
 			u, ttl, err := minioClient.PresignUploadPart(ctx, objectKey, uploadID, partNumber)
@@ -155,11 +159,17 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, er
 		Handler:           metricsMux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+	httpSrv := &http.Server{
+		Addr:              fmt.Sprintf(":%d", cfg.HTTPPort),
+		Handler:           httpapi.NewHandler(fileSvc, logger, cfg.MaxFileSizeBytes),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
 
 	return &App{
 		cfg:          cfg,
 		grpcServer:   grpcServer,
 		metricsSrv:   metricsSrv,
+		httpSrv:      httpSrv,
 		pgPool:       pool,
 		kafkaPub:     kafkaPub,
 		logger:       logger,
@@ -172,6 +182,13 @@ func (a *App) Run(ctx context.Context) error {
 		a.logger.Info("starting metrics server", "addr", a.metricsSrv.Addr)
 		if err := a.metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			a.logger.Error("metrics server", "error", err)
+		}
+	}()
+
+	go func() {
+		a.logger.Info("starting http api", "addr", a.httpSrv.Addr)
+		if err := a.httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			a.logger.Error("http api", "error", err)
 		}
 	}()
 
@@ -209,6 +226,7 @@ func (a *App) Run(ctx context.Context) error {
 		}
 
 		_ = a.metricsSrv.Shutdown(shutdownCtx)
+		_ = a.httpSrv.Shutdown(shutdownCtx)
 		return nil
 	case err := <-errCh:
 		return err
@@ -226,6 +244,11 @@ func (a *App) Close() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = a.metricsSrv.Shutdown(ctx)
+	}
+	if a.httpSrv != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = a.httpSrv.Shutdown(ctx)
 	}
 	if a.kafkaPub != nil {
 		_ = a.kafkaPub.Close()

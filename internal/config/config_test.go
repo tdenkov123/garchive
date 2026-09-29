@@ -19,6 +19,7 @@ func TestLoad_Defaults(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 50051, cfg.GRPCPort)
+	assert.Equal(t, 8081, cfg.HTTPPort)
 	assert.Equal(t, "localhost:6379", cfg.RedisAddr)
 	assert.Equal(t, "files", cfg.MinioBucket)
 	assert.Equal(t, 5*time.Minute, cfg.CacheTTL)

@@ -34,7 +34,7 @@ USER nonroot
 ENV APP_TMP_DATA=/tmp \
     TZ=UTC
 
-EXPOSE 50051 9090
+EXPOSE 50051 9090 8081
 
 LABEL org.opencontainers.image.title="garchive" \
       org.opencontainers.image.description="gRPC file metadata service" \

@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GArchive</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>GArchive</h1>
+      <p>Файлы одного владельца: список, загрузка, скачивание и удаление.</p>
+    </header>
+
+    <section class="panel">
+      <form id="owner-form">
+        <label for="owner-id">Owner ID</label>
+        <input id="owner-id" name="owner_id" value="user-1" autocomplete="off" required>
+        <button type="submit">Показать</button>
+      </form>
+
+      <form id="upload-form">
+        <label for="file">Файл</label>
+        <input id="file" name="file" type="file" required>
+        <button type="submit">Загрузить</button>
+      </form>
+    </section>
+
+    <p id="status" role="status"></p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Имя</th>
+          <th>Размер</th>
+          <th>Статус</th>
+          <th>Создан</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="files"></tbody>
+    </table>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

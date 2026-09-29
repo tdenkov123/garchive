@@ -2,6 +2,8 @@ package grpc_test
 
 import (
 	"context"
+	"io"
+	"strings"
 	"time"
 
 	"github.com/tdenkov123/file-metadata-service/internal/domain"
@@ -83,6 +85,14 @@ func (m *handlerMockStorage) PresignDownload(_ context.Context, _ string) (strin
 
 func (m *handlerMockStorage) RemoveObject(_ context.Context, _ string) error { return nil }
 
+func (m *handlerMockStorage) PutObject(context.Context, string, string, io.Reader, int64) error {
+	return nil
+}
+
+func (m *handlerMockStorage) GetObject(context.Context, string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
+}
+
 func (m *handlerMockStorage) CreateMultipartUpload(_ context.Context, _, _ string) (string, error) {
 	return "upload-id", nil
 }
@@ -109,6 +119,12 @@ func (m *handlerMockCache) InvalidateFile(_ context.Context, _ string) error { r
 
 type handlerMockEvents struct{}
 
-func (m *handlerMockEvents) PublishFileCreated(_ context.Context, _ domain.FileMetadata) error { return nil }
-func (m *handlerMockEvents) PublishFileReady(_ context.Context, _ domain.FileMetadata) error   { return nil }
-func (m *handlerMockEvents) PublishFileDeleted(_ context.Context, _ domain.FileMetadata) error { return nil }
+func (m *handlerMockEvents) PublishFileCreated(_ context.Context, _ domain.FileMetadata) error {
+	return nil
+}
+func (m *handlerMockEvents) PublishFileReady(_ context.Context, _ domain.FileMetadata) error {
+	return nil
+}
+func (m *handlerMockEvents) PublishFileDeleted(_ context.Context, _ domain.FileMetadata) error {
+	return nil
+}

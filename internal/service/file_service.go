@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"path"
 	"strings"
 	"time"
@@ -29,6 +32,8 @@ type ObjectStorage interface {
 	PresignUpload(ctx context.Context, objectKey, contentType string) (url string, expiresIn time.Duration, err error)
 	PresignDownload(ctx context.Context, objectKey string) (url string, expiresIn time.Duration, err error)
 	RemoveObject(ctx context.Context, objectKey string) error
+	PutObject(ctx context.Context, objectKey, contentType string, r io.Reader, size int64) error
+	GetObject(ctx context.Context, objectKey string) (io.ReadCloser, error)
 	CreateMultipartUpload(ctx context.Context, objectKey, contentType string) (uploadID string, err error)
 	PresignUploadPart(ctx context.Context, objectKey, uploadID string, partNumber int32) (url string, expiresIn time.Duration, err error)
 	CompleteMultipartUpload(ctx context.Context, objectKey, uploadID string, parts []domain.CompletedPart) error
@@ -228,6 +233,49 @@ func (s *FileService) DeleteFile(ctx context.Context, id, ownerID string) error 
 	_ = s.events.PublishFileDeleted(ctx, file)
 
 	return nil
+}
+
+func (s *FileService) UploadContent(ctx context.Context, ownerID, originalName, contentType string, r io.Reader, size int64) (domain.FileMetadata, error) {
+	created, err := s.CreateUpload(ctx, ownerID, originalName, contentType, size)
+	if err != nil {
+		return domain.FileMetadata{}, err
+	}
+
+	hasher := sha256.New()
+	if err := s.storage.PutObject(ctx, created.Metadata.ObjectKey, contentType, io.TeeReader(r, hasher), size); err != nil {
+		s.discardUpload(ctx, created.Metadata)
+		return domain.FileMetadata{}, err
+	}
+
+	sum := hex.EncodeToString(hasher.Sum(nil))
+	file, err := s.ConfirmUpload(ctx, created.Metadata.ID, ownerID, sum)
+	if err != nil {
+		s.discardUpload(ctx, created.Metadata)
+		return domain.FileMetadata{}, err
+	}
+	return file, nil
+}
+
+func (s *FileService) OpenContent(ctx context.Context, id, ownerID string) (domain.FileMetadata, io.ReadCloser, error) {
+	file, err := s.GetFile(ctx, id, ownerID)
+	if err != nil {
+		return domain.FileMetadata{}, nil, err
+	}
+	if !file.CanDownload() {
+		return domain.FileMetadata{}, nil, fmt.Errorf("%w: file is not ready", domain.ErrInvalidInput)
+	}
+
+	body, err := s.storage.GetObject(ctx, file.ObjectKey)
+	if err != nil {
+		return domain.FileMetadata{}, nil, err
+	}
+	return file, body, nil
+}
+
+func (s *FileService) discardUpload(ctx context.Context, file domain.FileMetadata) {
+	_ = s.storage.RemoveObject(ctx, file.ObjectKey)
+	_ = s.repo.SoftDelete(ctx, file.ID)
+	_ = s.cache.InvalidateFile(ctx, file.ID)
 }
 
 func validateCreateInput(ownerID, originalName, contentType string, sizeBytes, maxSize int64) error {

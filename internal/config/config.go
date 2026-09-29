@@ -13,7 +13,7 @@ const (
 )
 
 type Config struct {
-	AppEnv string
+	AppEnv   string
 	GRPCPort int
 
 	PostgresDSN string
@@ -23,11 +23,11 @@ type Config struct {
 	RedisDB       int
 	CacheTTL      time.Duration
 
-	MinioEndpoint  string
-	MinioAccessKey string
-	MinioSecretKey string
-	MinioBucket    string
-	MinioUseSSL    bool
+	MinioEndpoint     string
+	MinioAccessKey    string
+	MinioSecretKey    string
+	MinioBucket       string
+	MinioUseSSL       bool
 	PresignTTL        time.Duration
 	MultipartPartSize int64
 	MaxFileSizeBytes  int64
@@ -40,13 +40,14 @@ type Config struct {
 	GRPCTLSCertFile      string
 	GRPCTLSKeyFile       string
 
-	JWTEnabled   bool
+	JWTEnabled    bool
 	JWTHMACSecret string
-	JWTIssuer    string
-	JWTAudience  string
+	JWTIssuer     string
+	JWTAudience   string
 
-	RateLimitRPS float64
-	MetricsPort  int
+	RateLimitRPS    float64
+	MetricsPort     int
+	HTTPPort        int
 	ShutdownTimeout time.Duration
 }
 
@@ -85,6 +86,11 @@ func Load() (*Config, error) {
 	}
 
 	metricsPort, err := getEnvInt("METRICS_PORT", 9090)
+	if err != nil {
+		return nil, err
+	}
+
+	httpPort, err := getEnvInt("HTTP_PORT", 8081)
 	if err != nil {
 		return nil, err
 	}
@@ -140,6 +146,7 @@ func Load() (*Config, error) {
 		JWTAudience:          getEnv("JWT_AUDIENCE", "garchive-api"),
 		RateLimitRPS:         rateLimitRPS,
 		MetricsPort:          metricsPort,
+		HTTPPort:             httpPort,
 		ShutdownTimeout:      shutdownTimeout,
 	}
 

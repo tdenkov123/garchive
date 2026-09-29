@@ -3,6 +3,7 @@ package minio
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -71,6 +72,28 @@ func (c *Client) PresignDownload(ctx context.Context, objectKey string) (*url.UR
 
 func (c *Client) RemoveObject(ctx context.Context, objectKey string) error {
 	return c.client.RemoveObject(ctx, c.bucket, objectKey, gominio.RemoveObjectOptions{})
+}
+
+func (c *Client) PutObject(ctx context.Context, objectKey, contentType string, r io.Reader, size int64) error {
+	_, err := c.client.PutObject(ctx, c.bucket, objectKey, r, size, gominio.PutObjectOptions{
+		ContentType: contentType,
+	})
+	if err != nil {
+		return fmt.Errorf("put object: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) GetObject(ctx context.Context, objectKey string) (io.ReadCloser, error) {
+	obj, err := c.client.GetObject(ctx, c.bucket, objectKey, gominio.GetObjectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("get object: %w", err)
+	}
+	if _, err := obj.Stat(); err != nil {
+		_ = obj.Close()
+		return nil, fmt.Errorf("get object: %w", err)
+	}
+	return obj, nil
 }
 
 func (c *Client) CreateMultipartUpload(ctx context.Context, objectKey, contentType string) (string, error) {

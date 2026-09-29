@@ -1,8 +1,12 @@
 package service_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -97,7 +101,8 @@ func (m *mockRepo) DeleteUploadParts(_ context.Context, fileID string) error {
 }
 
 type mockStorage struct {
-	bucket string
+	bucket  string
+	objects map[string][]byte
 }
 
 func (m *mockStorage) Bucket() string { return m.bucket }
@@ -110,7 +115,30 @@ func (m *mockStorage) PresignDownload(_ context.Context, _ string) (string, time
 	return "https://download.example/presigned", 15 * time.Minute, nil
 }
 
-func (m *mockStorage) RemoveObject(_ context.Context, _ string) error { return nil }
+func (m *mockStorage) RemoveObject(_ context.Context, key string) error {
+	delete(m.objects, key)
+	return nil
+}
+
+func (m *mockStorage) PutObject(_ context.Context, key, _ string, r io.Reader, _ int64) error {
+	b, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	if m.objects == nil {
+		m.objects = make(map[string][]byte)
+	}
+	m.objects[key] = b
+	return nil
+}
+
+func (m *mockStorage) GetObject(_ context.Context, key string) (io.ReadCloser, error) {
+	b, ok := m.objects[key]
+	if !ok {
+		return nil, fmt.Errorf("object not found")
+	}
+	return io.NopCloser(bytes.NewReader(b)), nil
+}
 
 func (m *mockStorage) CreateMultipartUpload(_ context.Context, _, _ string) (string, error) {
 	return "upload-id-1", nil
@@ -144,6 +172,32 @@ func (m *mockEvents) PublishFileDeleted(_ context.Context, _ domain.FileMetadata
 
 func newTestService(repo *mockRepo) *service.FileService {
 	return service.NewFileService(repo, &mockStorage{bucket: "files"}, &mockCache{}, &mockEvents{}, testPartSize, 5*1024*1024*1024)
+}
+
+func TestFileService_UploadAndOpenContent(t *testing.T) {
+	repo := newMockRepo()
+	storage := &mockStorage{bucket: "files", objects: map[string][]byte{}}
+	svc := service.NewFileService(repo, storage, &mockCache{}, &mockEvents{}, testPartSize, 5*1024*1024*1024)
+
+	body := []byte("hello archive")
+	file, err := svc.UploadContent(context.Background(), "user-1", "note.txt", "text/plain", bytes.NewReader(body), int64(len(body)))
+	require.NoError(t, err)
+	assert.Equal(t, domain.FileStatusReady, file.Status)
+
+	sum := sha256.Sum256(body)
+	assert.Equal(t, hex.EncodeToString(sum[:]), file.ChecksumSHA256)
+
+	got, rc, err := svc.OpenContent(context.Background(), file.ID, "user-1")
+	require.NoError(t, err)
+	defer rc.Close()
+	assert.Equal(t, file.ID, got.ID)
+
+	data, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	assert.Equal(t, body, data)
+
+	_, _, err = svc.OpenContent(context.Background(), file.ID, "user-2")
+	require.ErrorIs(t, err, domain.ErrAccessDenied)
 }
 
 func TestFileService_CreateAndConfirmUpload(t *testing.T) {
